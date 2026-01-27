@@ -52,9 +52,50 @@ class BatchNorm1d:
   def parameters(self):
     return [self.gamma, self.beta]
 
+
+class LayerNorm1d:
+  
+  def __init__(self, dim, eps=1e-5):
+    self.dim = dim
+    self.eps = eps
+    # parameters (trained with backprop)
+    self.gamma = torch.ones(dim)
+    self.beta = torch.zeros(dim)
+  
+  def __call__(self, x):
+    # LayerNorm normalizes across the last dimension (features)
+    # Works for both 2D (batch, features) and 3D (batch, seq_len, features) inputs
+    # Calculate mean and variance across the last dimension
+    xmean = x.mean(-1, keepdim=True)  # mean across last dimension
+    xvar = x.var(-1, keepdim=True, unbiased=False)  # variance across last dimension
+    xhat = (x - xmean) / torch.sqrt(xvar + self.eps)  # normalize to unit variance
+    self.out = self.gamma * xhat + self.beta
+    return self.out
+  
+  def parameters(self):
+    return [self.gamma, self.beta]
+
 class Tanh:
   def __call__(self, x):
     self.out = torch.tanh(x)
     return self.out
+  def parameters(self):
+    return []
+
+class Dropout:
+  def __init__(self, p=0.5):
+    self.p = p
+    self.training = True
+  
+  def __call__(self, x):
+    if self.training:
+      # Create dropout mask: (1-p) probability of keeping
+      mask = (torch.rand_like(x) > self.p).float()
+      # Scale by 1/(1-p) to maintain expected value
+      self.out = x * mask / (1 - self.p)
+    else:
+      self.out = x
+    return self.out
+  
   def parameters(self):
     return []
