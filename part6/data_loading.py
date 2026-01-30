@@ -66,15 +66,9 @@ class CategoryVocab(NamedTuple):
 # ---------------------------------------------------------------------------
 
 
-def load_words_and_categories(
-    kaggle_path: str,
-    *,
-    extra_csv_path: str | None = None,
-    extra_name_column: str = "name",
-    extra_category_column: str = "source_category",
-) -> tuple[list[str], list[str]]:
+def load_dir(dir_path: str) -> tuple[list[str], list[str]]:
     """
-    Load words and categories from Kaggle CSV files and optional extra CSV.
+    Load all CSV files in a directory. No header; category = filename (without .csv).
 
     Returns:
         (words, categories) with aligned lengths.
@@ -82,7 +76,7 @@ def load_words_and_categories(
     names: list[pd.Series] = []
     categories: list[list[str]] = []
 
-    for f in glob.glob(kaggle_path + "/*.csv"):
+    for f in glob.glob(dir_path.rstrip("/\\") + "/*.csv"):
         df = pd.read_csv(f, header=None)
         series = normalize_string_df(df)
         names.append(series)
@@ -93,20 +87,74 @@ def load_words_and_categories(
         else:
             categories.append([""] * len(series))
 
-    words = pd.concat(names, ignore_index=True).tolist()
+    words = pd.concat(names, ignore_index=True).tolist() if names else []
     categories_flat = [c for sub in categories for c in sub]
-
-    if extra_csv_path:
-        try:
-            extra = pd.read_csv(extra_csv_path)
-            series2 = normalize_string_df(extra, extra_name_column)
-            cat2 = extra[extra_category_column].astype(str).str.replace("Category: ", "", regex=False)
-            words.extend(series2.tolist())
-            categories_flat.extend(cat2.tolist())
-        except Exception as e:
-            raise FileNotFoundError(f"Cannot load extra CSV {extra_csv_path}: {e}") from e
-
     return words, categories_flat
+
+
+def load_file(
+    file_path: str,
+    name_column: str,
+    category_column: str,
+    *,
+    category_prefix: str = "Category: ",
+) -> tuple[list[str], list[str]]:
+    """
+    Load a single CSV with header. Uses name_column and category_column.
+
+    Returns:
+        (words, categories) with aligned lengths.
+    """
+    df = pd.read_csv(file_path)
+    series = normalize_string_df(df, name_column)
+    cat = (
+        df[category_column]
+        .astype(str)
+        .str.replace(category_prefix, "", regex=False)
+        .str.strip()
+    )
+    words = series.tolist()
+    categories_flat = cat.tolist()
+    return words, categories_flat
+
+
+def load_words_and_categories(
+    *,
+    dirs_configs: list[dict] | None = None,
+    files_configs: list[dict] | None = None,
+) -> tuple[list[str], list[str]]:
+    """
+    Load and merge words/categories from multiple dirs and/or files by config.
+
+    Each config dict is unpacked into load_dir or load_file. Example::
+
+        dirs_configs = [{"dir_path": "/path/to/kaggle"}]
+        files_configs = [
+            {"file_path": "data/extra.csv", "name_column": "name", "category_column": "source_category"},
+        ]
+        words, categories = load_words_and_categories(dirs_configs=dirs_configs, files_configs=files_configs)
+
+    Args:
+        dirs_configs: List of kwargs for load_dir (e.g. {"dir_path": "..."}).
+        files_configs: List of kwargs for load_file (e.g. {"file_path": "...", "name_column": "...", "category_column": "..."}).
+
+    Returns:
+        (words, categories) with aligned lengths.
+    """
+    all_words: list[str] = []
+    all_categories: list[str] = []
+
+    for config in (dirs_configs or []):
+        w, c = load_dir(**config)
+        all_words.extend(w)
+        all_categories.extend(c)
+
+    for config in (files_configs or []):
+        w, c = load_file(**config)
+        all_words.extend(w)
+        all_categories.extend(c)
+
+    return all_words, all_categories
 
 
 # ---------------------------------------------------------------------------

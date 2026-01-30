@@ -4,6 +4,7 @@ Category-conditioned name generation model.
 - Trunk: one list of blocks, applied as x = x + block(x) (identity shortcut only).
 - Shortcuts are never weighted: residual only where input and output dimensions match.
 - Configurable depths and dimensions via ModelConfig.
+- Inherits GenerationMixin for generate_token / generate_name.
 """
 
 from __future__ import annotations
@@ -14,6 +15,8 @@ from typing import Any, Callable
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from part6.generation import GenerationMixin
 
 
 # ---------------------------------------------------------------------------
@@ -36,6 +39,8 @@ class ModelConfig:
     cat_emb_dim: int = 32
     dropout: float = 0.1
     last_layer_scale: float = 0.1
+    category_dropout: float = 0.0  # probability of replacing category with unknown (for generalization)
+    unknown_category_idx: int = 0  # index used when category is dropped (e.g. cat_stoi["unknown"])
 
     @property
     def head_size(self) -> int:
@@ -187,11 +192,12 @@ def _mlp_blocks_spec(config: ModelConfig) -> list[tuple[int, int, str, float]]:
 # ---------------------------------------------------------------------------
 
 
-class CategoryConditionedNameModel(nn.Module):
+class CategoryConditionedNameModel(GenerationMixin, nn.Module):
     """
     Trunk: embed -> project to n_hidden -> for block in blocks: x = x + block(x, context).
     Head: flatten -> MLP blocks (residual only when dims match).
     Shortcuts are identity only; no learned shortcut projections.
+    Generation: generate_token, generate_name (from GenerationMixin), plus generate() convenience.
     """
 
     def __init__(self, config: ModelConfig | None = None, **kwargs):
@@ -247,6 +253,16 @@ class CategoryConditionedNameModel(nn.Module):
         targets: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         B, T = idx.shape
+        c = self.config
+
+        # Category dropout: during training, replace category with unknown with probability category_dropout
+        if self.training and targets is not None and c.category_dropout > 0:
+            drop = torch.rand(B, device=cat_idx.device) < c.category_dropout
+            cat_idx = torch.where(
+                drop,
+                torch.full((B,), c.unknown_category_idx, device=cat_idx.device, dtype=cat_idx.dtype),
+                cat_idx,
+            )
 
         x = self.project(self.token_embedding(idx))
         context = {"cat_emb": self.cat_embedding(cat_idx)}
@@ -262,7 +278,6 @@ class CategoryConditionedNameModel(nn.Module):
         loss = F.cross_entropy(logits, targets) if targets is not None else None
         return logits, loss
 
-    @torch.no_grad()
     def generate(
         self,
         cat_idx: int | torch.Tensor,
@@ -272,53 +287,20 @@ class CategoryConditionedNameModel(nn.Module):
         temperature: float = 1.0,
         top_k: int | None = None,
         generator: torch.Generator | None = None,
+        replace_end_with: str | None = " ",
     ) -> str:
         """
-        Sample a single name for the given category.
-
-        Args:
-            cat_idx: scalar or (1,) category index
-            itos: index-to-string mapping for decoding
-            max_new_tokens: max characters (including '.' terminator)
-            temperature: sampling temperature
-            top_k: if set, only sample from top-k logits
-            generator: optional RNG for reproducibility
-
-        Returns:
-            Decoded name string (without trailing '.')
+        Convenience: generate a name using only itos (builds stoi from itos).
+        Delegates to self.generate_name.
         """
-        self.eval()
-        device = next(self.parameters()).device
-        if isinstance(cat_idx, int):
-            cat_idx = torch.tensor([cat_idx], device=device, dtype=torch.long)
-        elif cat_idx.dim() == 0:
-            cat_idx = cat_idx.unsqueeze(0).to(device)
-        else:
-            cat_idx = cat_idx.to(device)
-
-        context = [0] * self.block_size
-        has_space = False
-        out: list[int] = []
-
-        for _ in range(max_new_tokens):
-            x = torch.tensor([context], device=device, dtype=torch.long)
-            logits, _ = self.forward(x, cat_idx, targets=None)
-            logits = logits[0] / temperature
-            if top_k is not None:
-                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-                logits[logits < v[-1]] = float("-inf")
-            probs = F.softmax(logits, dim=-1)
-            ix = torch.multinomial(probs, num_samples=1, generator=generator).item()
-
-            if itos.get(ix, "") == " ":
-                has_space = True
-            if ix == 0:
-                if not has_space:
-                    ix = next(i for i, s in itos.items() if s == " ")
-                    has_space = True
-                else:
-                    break
-            context = context[1:] + [ix]
-            out.append(ix)
-
-        return "".join(itos.get(i, "") for i in out)
+        stoi = {s: i for i, s in itos.items()}
+        return self.generate_name(
+            cat_idx,
+            itos,
+            stoi,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            top_k=top_k,
+            generator=generator,
+            replace_end_with=replace_end_with,
+        )

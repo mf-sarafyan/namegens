@@ -32,7 +32,9 @@ Part 5 is an evolution of part 4 where I'm taking the category data from the dat
 
 It doesn't work very well - overfits like hell -, but right now I'm mostly playing around with the architecture, before commiting to an idea I like and trying to optimize the model.
 
+## Part 6 
 
+Beautified version - just organizing everything a bit better and more professionally to iterate easier. One major change already has been adding skip connections to all the layers. 
 
 
 # Getting started 
