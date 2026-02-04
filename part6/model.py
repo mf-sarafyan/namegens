@@ -277,30 +277,3 @@ class CategoryConditionedNameModel(GenerationMixin, nn.Module):
         logits = x
         loss = F.cross_entropy(logits, targets) if targets is not None else None
         return logits, loss
-
-    def generate(
-        self,
-        cat_idx: int | torch.Tensor,
-        itos: dict[int, str],
-        *,
-        max_new_tokens: int = 50,
-        temperature: float = 1.0,
-        top_k: int | None = None,
-        generator: torch.Generator | None = None,
-        replace_end_with: str | None = " ",
-    ) -> str:
-        """
-        Convenience: generate a name using only itos (builds stoi from itos).
-        Delegates to self.generate_name.
-        """
-        stoi = {s: i for i, s in itos.items()}
-        return self.generate_name(
-            cat_idx,
-            itos,
-            stoi,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature,
-            top_k=top_k,
-            generator=generator,
-            replace_end_with=replace_end_with,
-        )

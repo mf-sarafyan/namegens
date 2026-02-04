@@ -81,11 +81,13 @@ class GenerationMixin:
         top_k: int | None = None,
         generator: torch.Generator | None = None,
         replace_end_with: str | None = " ",
+        end_token_id: int | None = None,
+        pad_token_id: int | None = None,
     ) -> str:
         """
         Generate a full name (one or more words) for the given category.
 
-        When the model would output the end token ('.'), replace_end_with controls
+        When the model would output the end token (<EOS>), replace_end_with controls
         what happens:
         - None: stop immediately (single word, no space).
         - " ": output a space and continue (multiple words).
@@ -101,20 +103,24 @@ class GenerationMixin:
             generator: optional RNG.
             replace_end_with: string to output instead of ending on first end token;
                 encoded with stoi and appended so generation continues. None = stop on first end.
+            end_token_id: token id that ends the sequence (e.g. <EOS>). Default 0 for backward compat.
+            pad_token_id: token id used to fill context (e.g. <PAD>). Default 0 for backward compat.
 
         Returns:
-            Decoded name string (no trailing '.').
+            Decoded name string (no trailing end token).
         """
         self.eval()
         device = next(self.parameters()).device
         block_size = self.block_size
         cat_idx_t = self._cat_idx_tensor(cat_idx)
+        eos_id = end_token_id if end_token_id is not None else 0
+        pad_id = pad_token_id if pad_token_id is not None else 0
 
         replacement_tokens: list[int] = []
         if replace_end_with is not None and replace_end_with:
             replacement_tokens = [stoi[c] for c in replace_end_with if c in stoi]
 
-        context = [0] * block_size
+        context = [pad_id] * block_size
         out: list[int] = []
         replaced_end = False
 
@@ -123,22 +129,24 @@ class GenerationMixin:
                 context, cat_idx_t, temperature=temperature, top_k=top_k, generator=generator
             )
 
-            if ix == 0:
+            if ix == eos_id:
                 if replace_end_with is not None and not replaced_end and replacement_tokens:
                     out.extend(replacement_tokens)
                     context = context[len(replacement_tokens) :] + replacement_tokens
                     replaced_end = True
                 else:
                     break
-            else:
+            elif ix != pad_id:
                 out.append(ix)
+                context = context[1:] + [ix]
+            else:
                 context = context[1:] + [ix]
 
         return "".join(itos.get(i, "") for i in out)
 
 
 # ---------------------------------------------------------------------------
-# Standalone wrappers (for use without inheritance)
+# Standalone wrappers (for use without inheritance: generate_token(model, ...))
 # ---------------------------------------------------------------------------
 
 
@@ -168,6 +176,8 @@ def generate_name(
     top_k: int | None = None,
     generator: torch.Generator | None = None,
     replace_end_with: str | None = " ",
+    end_token_id: int | None = None,
+    pad_token_id: int | None = None,
 ) -> str:
     """Thin wrapper: model.generate_name(cat_idx, itos, stoi, ...)."""
     return model.generate_name(
@@ -179,4 +189,6 @@ def generate_name(
         top_k=top_k,
         generator=generator,
         replace_end_with=replace_end_with,
+        end_token_id=end_token_id,
+        pad_token_id=pad_token_id,
     )
