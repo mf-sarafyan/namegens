@@ -15,6 +15,8 @@ from typing import Any, NamedTuple
 import pandas as pd
 import torch
 
+from part7.category_groups import CATEGORY_GROUP_MAP
+
 
 # ---------------------------------------------------------------------------
 # String normalization
@@ -171,15 +173,25 @@ def build_character_vocabulary(words: list[str]) -> CharacterVocab:
     return CharacterVocab(stoi=stoi, itos=itos, size=len(itos))
 
 
-def build_category_vocabulary(categories: list[str]) -> CategoryVocab:
-    """Normalize categories and build category vocab. Uses 'unknown' for empty/NaN."""
+def build_category_vocabulary(
+    categories: list[str],
+    *,
+    use_category_groups: bool = True,
+) -> CategoryVocab:
+    """
+    Normalize categories and build category vocab. Uses 'unknown' for empty/NaN.
+    If use_category_groups is True, maps known categories to grouped labels via CATEGORY_GROUP_MAP.
+    """
     normalized: list[str] = []
     for cat in categories:
         if pd.isna(cat) or str(cat).strip() == "":
             normalized.append("unknown")
         else:
             c = str(cat).lower().replace("category:", "").strip()
-            normalized.append(c if c else "unknown")
+            c = c if c else "unknown"
+            if use_category_groups:
+                c = CATEGORY_GROUP_MAP.get(c, c)
+            normalized.append(c)
 
     unique = sorted(set(normalized))
     stoi = {c: i for i, c in enumerate(unique)}

@@ -56,6 +56,39 @@ class ModelConfig:
 # ---------------------------------------------------------------------------
 
 
+class AdaptiveLayerNorm(nn.Module):
+    """
+    AdaLN: normalize x then scale and shift by category embedding.
+    out = scale(cat_emb) * LayerNorm(x) + shift(cat_emb).
+    Same API as other trunk components: forward(x, cat_emb) -> same shape as x.
+    """
+
+    def __init__(self, cat_emb_dim: int, n_embd: int):
+        super().__init__()
+        self.ln = nn.LayerNorm(n_embd, elementwise_affine=False)
+        self.cond_proj = nn.Linear(cat_emb_dim, 2 * n_embd)
+
+    def forward(self, x: torch.Tensor, cat_emb: torch.Tensor) -> torch.Tensor:
+        x_norm = self.ln(x)
+        scale, shift = self.cond_proj(cat_emb).chunk(2, dim=-1)
+        return scale.unsqueeze(1) * x_norm + shift.unsqueeze(1)
+
+
+class AdaLNBlockWithContext(nn.Module):
+    """Wraps AdaptiveLayerNorm so that x = x + block(x, context) yields x = adaln(x)."""
+
+    def __init__(self, adaln: AdaptiveLayerNorm):
+        super().__init__()
+        self.adaln = adaln
+
+    def forward(self, x: torch.Tensor, context: dict[str, Any] | None = None) -> torch.Tensor:
+        cat_emb = context["cat_emb"] if context else None
+        if cat_emb is None:
+            raise ValueError("AdaLN block requires context['cat_emb']")
+        out = self.adaln(x, cat_emb)
+        return out - x
+
+
 class CategoryCrossAttention(nn.Module):
     """Category vector queries the sequence (q from cat, k,v from seq). Pre-norm, residual."""
 
@@ -249,7 +282,8 @@ class CategoryConditionedNameModel(GenerationMixin, nn.Module):
         # Single projection (no residual: dimension change n_embd -> n_hidden)
         self.project = nn.Linear(c.n_embd, c.n_hidden, bias=False)
 
-        # Trunk: cat queries seq, then seq queries cat, then self-attention blocks
+        # Trunk: AdaLN (category modulates sequence first), then cat↔seq cross-attn, then self-attention
+        adaln = AdaptiveLayerNorm(c.cat_emb_dim, c.n_hidden)
         cat_cross = CategoryCrossAttention(
             c.cat_emb_dim, c.n_hidden, c.head_size, c.dropout
         )
@@ -257,6 +291,7 @@ class CategoryConditionedNameModel(GenerationMixin, nn.Module):
             c.cat_emb_dim, c.n_hidden, c.head_size, c.dropout
         )
         self.blocks = nn.ModuleList([
+            AdaLNBlockWithContext(adaln),
             TrunkBlockWithContext(cat_cross),
             TrunkBlockWithContext(seq_queries_cat),
             *[

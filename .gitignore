@@ -3,6 +3,10 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# PyTorch saved models
+*.pt
+*.pth
+
 # C extensions
 *.so
 
