@@ -67,7 +67,7 @@ https://archive.org/stream/story_games_name_project/the_story_games_names_projec
 
 https://www.darkshire.net/jhkim/rpg/lordoftherings/names.pdf
 
-data.data_scraping.py is a simple code that scrapes the contents of the DnD Forgotten Realms wiki for character names together with their race categories.
+data.data_scraping.py is a simple code that scrapes the contents of the DnD Forgotten Realms wiki for character names together with their race categories. llm_parse_names.py is an auxiliary code to parse the e-book story games names project into a categorized csv file.
 
 ```
 import kagglehub
